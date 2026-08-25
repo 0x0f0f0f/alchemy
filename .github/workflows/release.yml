@@ -52,7 +52,9 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ steps.bot-token.outputs.token }}
-          submodules: true
+
+      - name: Checkout distilled
+        run: git submodule update --init --depth=1 --checkout -- distilled
 
       - name: Setup pnpm, Node.js, Bun
         uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
@@ -62,6 +64,15 @@ jobs:
 
       - name: Install Node 24
         run: pnpm runtime set node 24 -g
+
+      - name: Restore Turbo cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.repository_id }}-${{ github.sha }}-${{ github.workflow }}-${{ github.run_attempt }}
+          restore-keys: |
+            turbo-${{ runner.os }}-${{ github.repository_id }}-${{ github.sha }}-
+            turbo-${{ runner.os }}-${{ github.repository_id }}-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -112,9 +123,9 @@ jobs:
         with:
           ref: ${{ needs.build.outputs.sha }}
           fetch-depth: 0
-          # pnpm needs the distilled submodule (workspace member); the root
-          # `prepare` script also builds distilled/packages/cloudflare.
-          submodules: true
+
+      - name: Checkout distilled
+        run: git submodule update --init --depth=1 --checkout -- distilled
 
       - name: Setup pnpm, Node.js, Bun
         uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
@@ -125,8 +136,10 @@ jobs:
       - name: Install Node 24
         run: pnpm runtime set node 24 -g
 
+      # Release scripts import changelogithub, but publishing does not need
+      # package lifecycle scripts or the root Turbo-backed prepare build.
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Remove token-based npm authentication
         run: sed -i '/always-auth/d' ~/.npmrc 2>/dev/null || true

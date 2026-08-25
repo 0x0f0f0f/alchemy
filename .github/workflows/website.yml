@@ -4,12 +4,21 @@ on:
   # Manual override — deploys unconditionally on whatever branch it's run
   # from (use this to force a prod deploy from main without a release).
   workflow_dispatch:
-  # No `paths` filter on push: every main commit updates main.alchemy.run,
-  # while release commits update production regardless of which files they
-  # touch.
+  # Release commits update package manifests, so packages/** keeps production
+  # deploys automatic without redeploying the site for unrelated main commits.
   push:
     branches:
       - main
+    paths:
+      - "website/**"
+      - "packages/**"
+      - "scripts/generate-api-reference.ts"
+      - "patches/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig.json"
+      - ".github/workflows/website.yml"
   pull_request:
     # `labeled` so adding `deploy-website` on an open PR triggers a
     # deploy without needing another push.
@@ -21,8 +30,13 @@ on:
       - closed
     paths:
       - "website/**"
-      - "packages/alchemy/**"
+      - "packages/**"
+      - "scripts/generate-api-reference.ts"
+      - "patches/**"
+      - "package.json"
       - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig.json"
       - ".github/workflows/website.yml"
 
 concurrency:
@@ -57,9 +71,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # pnpm needs the distilled submodule (workspace member)
-          submodules: true
+
+      - name: Checkout distilled
+        run: git submodule update --init --depth=1 --checkout -- distilled
 
       # Mint a token for the alchemy-version-bot GitHub App so the PR
       # preview comment (created via GitHub.Comment in alchemy.run.ts)
@@ -83,13 +97,29 @@ jobs:
         run: pnpm runtime set node 24 -g
 
       - name: Restore Astro build cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: website/node_modules/.astro
-          key: website-deploy-astro-${{ runner.os }}-${{ github.event.pull_request.number || 'main' }}-${{ github.sha }}
+          key: website-astro-${{ runner.os }}-${{ github.event.pull_request.number || 'main' }}-${{ github.sha }}-${{ github.workflow }}-${{ github.run_attempt }}
           restore-keys: |
-            website-deploy-astro-${{ runner.os }}-${{ github.event.pull_request.number || 'main' }}-
-            website-deploy-astro-${{ runner.os }}-main-
+            website-astro-${{ runner.os }}-${{ github.event.pull_request.number || 'main' }}-${{ github.sha }}-
+            website-astro-${{ runner.os }}-${{ github.event.pull_request.number || 'main' }}-
+            website-astro-${{ runner.os }}-main-
+
+      - name: Restore website font cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: website/assets/fonts
+          key: website-fonts-${{ hashFiles('website/scripts/download-fonts.ts') }}
+
+      - name: Restore Turbo cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.repository_id }}-${{ github.sha }}-${{ github.workflow }}-${{ github.run_attempt }}
+          restore-keys: |
+            turbo-${{ runner.os }}-${{ github.repository_id }}-${{ github.sha }}-
+            turbo-${{ runner.os }}-${{ github.repository_id }}-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -128,9 +158,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # pnpm needs the distilled submodule (workspace member)
-          submodules: true
+
+      - name: Checkout distilled
+        run: git submodule update --init --depth=1 --checkout -- distilled
 
       - name: Generate bot token
         id: bot-token
@@ -149,7 +179,9 @@ jobs:
         run: pnpm runtime set node 24 -g
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        # Destroy evaluates the stack and calls providers; it does not build or
+        # bundle anything. Skip native postinstalls and the root prepare build.
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Install Doppler CLI
         uses: dopplerhq/cli-action@4819d808ab99e5cde19a0637a16536a4038fad73 # v4
